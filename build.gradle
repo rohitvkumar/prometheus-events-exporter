@@ -1,0 +1,34 @@
+// Copyright 2015 TiVo Inc. All Rights Reserved.
+
+buildscript {
+  repositories {
+    // uncomment to use local repo when testing tivo-docker plugin
+    // maven { url "file://${projectDir}/../repo" }
+    maven {
+      url 'http://repo-vip.tivo.com:8081/artifactory/plugins-release'
+    }
+    // temporary until gradle-docker-plugin accepts our pull request
+    maven { url 'http://repo-vip.tivo.com:8081/artifactory/plugins-snapshot' }
+  }
+
+  dependencies {
+    classpath 'com.tivo:tivo-docker-plugin:0.17'
+  }
+}
+
+repositories {
+  maven {
+    url "http://repo-vip.tivo.com:8081/artifactory/libs-release"
+  }
+}
+
+task wrapper(type: Wrapper) {
+  gradleVersion = '2.12'
+}
+
+apply plugin: 'tivo-docker'
+
+tivoDocker {
+  imageName = 'prometheus-events-exporter'
+  dockerFile = file("Dockerfile.${imageName}")
+}

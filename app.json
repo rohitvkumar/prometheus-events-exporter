@@ -1,0 +1,4 @@
+{
+    "name": "prometheus-events-exporter",
+    "description": "Export events topic to prometheus."
+}

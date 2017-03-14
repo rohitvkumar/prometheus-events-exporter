@@ -1,0 +1,4 @@
+#!/bin/sh
+
+exec 2>&1
+exec python /home/tivo/bin/exporter.py -b localhost -p 50002 -v

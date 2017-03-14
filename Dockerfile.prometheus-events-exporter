@@ -1,0 +1,20 @@
+FROM alpine:3.5
+MAINTAINER Rohit Valsakumar <rvalsakumar@tivo.com>
+
+ENTRYPOINT [ "runit_bootstrap.sh" ]
+
+RUN adduser -HD log && addgroup log log
+
+COPY usr /usr
+RUN chmod +x /usr/bin/*.sh && packages.sh
+
+COPY tivo /home/tivo
+RUN chmod +x /home/tivo/bin/*.*
+
+ENV PATH /home/tivo/bin:$PATH
+
+COPY etc /etc
+RUN chmod -R +x /etc/service
+
+RUN mkdir -p /TivoData/prometheus-events-exporter && mkdir -p /TivoData/Log
+COPY build/buildInfo.json app.json /TivoData/etc/buildinfo/
