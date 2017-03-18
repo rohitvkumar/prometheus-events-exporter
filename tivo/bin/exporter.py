@@ -17,11 +17,11 @@ import threading
 
 VERBOSE = False
 SIMULATED = False
-INTERVAL_S = 5
+INTERVAL_S = 30
 
 gauges = {}
 counters = {}
-filters = {}
+lru_cache = {}
         
 def transformEventToPrometheusMetric(eventStr, drop_list, verbose):
     try:
@@ -42,7 +42,7 @@ def transformEventToPrometheusMetric(eventStr, drop_list, verbose):
         labels = {}
         # Emit one counter per event
         for item in event.items():
-            if item[0] in ["attrs", "type", "tsMS", "details"]:
+            if item[0] in ["attrs", "type", "tsMS", "details", "service"]:
                 continue
             labels[re.sub(r'[^a-zA-Z0-9_:]', '_', item[0])] = item[1]
         process_counter(met_name, labels, 1)
@@ -68,7 +68,9 @@ def process_guage(name, labels, value):
             gauges[name] = Gauge(name, '', tuple(labels.keys()))
         
         if labels:
-            gauges[name].labels(*tuple(labels.values())).set(value)
+            tup = tuple(labels.values())
+            gauges[name].labels(*tup).set(value)
+            lru_cache[(name, tup)] = time.time()
         else:
             gauges[name].set(value)
     except Exception as e:
@@ -102,6 +104,21 @@ def read_topic(consumer, drop_list):
             if VERBOSE:
                 logger.info("Processed {0} events in {1} seconds, now exit loop.".format(count, INTERVAL_S))
             break
+
+def reset_lru_gauges():
+    now = time.time()
+    for lru in lru_cache.items():
+        try:
+            # Remove the gauge if it has not been updated for a long time (secs).
+            if now - lru[1] >= 15 * 60:
+                name = lru[0][0]
+                tup = lru[0][1]
+                gauges[name].remove(*tup)
+                del lru_cache[(name, tup)]
+                if VERBOSE:
+                    logger.info("Reset gauge: {0}:{1}".format(name, tup))
+        except Exception as e:
+            logger.error("Error processing lru: {0}".format(e))
     
 def wait_for_threads():
     seconds = 0
@@ -150,6 +167,7 @@ def main():
         
         while True:
             read_topic(client, args.drop_list)
+            reset_lru_gauges()
                 
     except KeyboardInterrupt as e:
         logger.info("Stopped")
