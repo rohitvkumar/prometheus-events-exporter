@@ -1,0 +1,6 @@
+#!/bin/sh
+
+NAME=admin
+mkdir -p /var/log/${NAME}
+chown log:log /var/log/${NAME}
+exec chpst -ulog svlogd -tt /var/log/${NAME}

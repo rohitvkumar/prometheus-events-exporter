@@ -1,0 +1,5 @@
+#!/bin/sh
+
+sv start properties || exit 1
+exec 2>&1
+exec chpst -utivo runsvdir /home/tivo/service

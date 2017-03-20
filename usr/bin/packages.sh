@@ -1,6 +1,6 @@
 #!/bin/sh
 
-set -eou
+set -eoux
 
 # Install essentials
 apk --update add curl python py-pip runit tar zlib gzip

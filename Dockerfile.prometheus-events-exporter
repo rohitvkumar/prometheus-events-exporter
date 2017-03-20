@@ -3,18 +3,24 @@ MAINTAINER Rohit Valsakumar <rvalsakumar@tivo.com>
 
 ENTRYPOINT [ "runit_bootstrap.sh" ]
 
-RUN adduser -HD log && addgroup log log
+RUN adduser -D -u 1000 -H tivo && addgroup tivo tivo && \
+    mkdir -p /TivoData/Log /TivoData/run /TivoData/etc /TivoData/bin && \
+    chown -R tivo:tivo /TivoData
+RUN adduser -D -u 1001 -H log && addgroup log log
 
 COPY usr /usr
 RUN chmod +x /usr/bin/*.sh && packages.sh
 
-COPY tivo /home/tivo
-RUN chmod +x /home/tivo/bin/*.*
-
-ENV PATH /home/tivo/bin:$PATH
-
 COPY etc /etc
 RUN chmod -R +x /etc/service
 
-RUN mkdir -p /TivoData/prometheus-events-exporter && mkdir -p /TivoData/Log
+ENV PATH /home/tivo/bin:$PATH
+ENV SERVICE_NAME prometheus-events-exporter
+
+COPY tivo /home/tivo
+RUN chmod +x /home/tivo/bin/*.*
+RUN chmod -R +x /home/tivo/service
+RUN chown -R tivo:tivo /home/tivo
+
+RUN mkdir -p /TivoData/prometheus-events-exporter
 COPY build/buildInfo.json app.json /TivoData/etc/buildinfo/

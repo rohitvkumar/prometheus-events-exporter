@@ -10,6 +10,10 @@ import os
 import signal
 import subprocess
 
+def alarm_handler(signum, frame):
+    logger.info('Signal handler called with signal: {0}'.format(signum))
+    shutdown()
+
 @route('/health')
 def health():
     status = subprocess.check_output(["sv", "status", "exporter"])
@@ -56,6 +60,8 @@ def main():
     run(host='0.0.0.0', port=40102)
 
 if __name__ == '__main__':
+    signal.signal(signal.SIGALRM, alarm_handler)
+    
     log_file = "/TivoData/Log/admin/admin.log"
     if not os.path.exists(os.path.dirname(log_file)):
         os.makedirs(os.path.dirname(log_file))
