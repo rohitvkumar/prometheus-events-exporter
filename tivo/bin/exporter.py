@@ -21,8 +21,9 @@ INTERVAL_S = 1
 
 gauges = {}
 counters = {}
-lru_cache = {}
-        
+lru_cache_active = dict()
+lru_cache_inactive = dict()
+
 def transformEventToPrometheusMetric(eventStr, drop_list, verbose):
     try:
         if not eventStr:
@@ -69,8 +70,12 @@ def process_guage(name, labels, value):
         
         if labels:
             tup = tuple(labels.values())
+            key = (name, tup)
+            lru_cache_active[key] = 1
             gauges[name].labels(*tup).set(value)
-            lru_cache[(name, tup)] = time.time()
+            #gauges[name].labels(*tup).set_function(gauge_collect_callback_generator(name, tup, value))
+            if key in lru_cache_inactive:
+                del lru_cache_inactive[key]
         else:
             gauges[name].set(value)
     except Exception as e:
@@ -106,19 +111,20 @@ def read_topic(consumer, drop_list):
             break
 
 def reset_lru_gauges():
-    now = time.time()
-    for lru in lru_cache.items():
+    for lru in lru_cache_inactive.items():
         try:
-            # Remove the gauge if it has not been updated for a long time (secs).
-            if now - lru[1] > INTERVAL_S:
-                name = lru[0][0]
-                tup = lru[0][1]
-                gauges[name].remove(*tup)
-                del lru_cache[(name, tup)]
-                if VERBOSE:
-                    logger.info("Reset gauge: {0}:{1}".format(name, tup))
+            name = lru[0][0]
+            tup = lru[0][1]
+            gauges[name].remove(*tup)
+            if VERBOSE:
+                logger.info("Reset gauge: {0}:{1}".format(name, tup))
         except Exception as e:
             logger.error("Error processing lru: {0}".format(e))
+    lru_cache_inactive.clear()
+    global lru_cache_inactive
+    global lru_cache_active
+    lru_cache_inactive = lru_cache_active
+    lru_cache_active = dict()
     
 def wait_for_threads():
     seconds = 0
@@ -155,7 +161,7 @@ def main():
         logger.info("Preparing to listen for events from {}".format(bootstrap))
     
     try:
-        timeout_ms = float('inf')
+        timeout_ms = INTERVAL_S * 1000
         client = KafkaConsumer("events",
                      enable_auto_commit=(not SIMULATED),
                      group_id="events-metrics-prometheus-exporter",
