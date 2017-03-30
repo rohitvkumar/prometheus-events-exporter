@@ -17,7 +17,7 @@ import threading
 
 VERBOSE = False
 SIMULATED = False
-INTERVAL_S = 30
+INTERVAL_S = 1
 
 gauges = {}
 counters = {}
@@ -110,7 +110,7 @@ def reset_lru_gauges():
     for lru in lru_cache.items():
         try:
             # Remove the gauge if it has not been updated for a long time (secs).
-            if now - lru[1] >= 15 * 60:
+            if now - lru[1] > INTERVAL_S:
                 name = lru[0][0]
                 tup = lru[0][1]
                 gauges[name].remove(*tup)
