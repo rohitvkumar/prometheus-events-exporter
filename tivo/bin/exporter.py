@@ -10,6 +10,7 @@ import os
 from prometheus_client import start_http_server, Gauge, Counter
 import re
 import sys
+from threading import Lock
 import traceback
 import time
 import threading
@@ -17,12 +18,21 @@ import threading
 
 VERBOSE = False
 SIMULATED = False
-INTERVAL_S = 1
+INTERVAL_S = 15
 
 gauges = {}
 counters = {}
-lru_cache_active = dict()
-lru_cache_inactive = dict()
+gauges_collected = dict()
+gauges_collected_lock = Lock()
+
+def gauge_collect_callback_generator(key, gauge_val):
+    def callback():
+        with gauges_collected_lock:
+            if VERBOSE:
+                logger.info("Collecting gauge: {0}".format(key))
+            gauges_collected[key] = 0
+        return gauge_val
+    return callback
 
 def transformEventToPrometheusMetric(eventStr, drop_list, verbose):
     try:
@@ -71,13 +81,9 @@ def process_guage(name, labels, value):
         if labels:
             tup = tuple(labels.values())
             key = (name, tup)
-            lru_cache_active[key] = 1
-            gauges[name].labels(*tup).set(value)
-            #gauges[name].labels(*tup).set_function(gauge_collect_callback_generator(name, tup, value))
-            if key in lru_cache_inactive:
-                del lru_cache_inactive[key]
+            gauges[name].labels(*tup).set_function(gauge_collect_callback_generator(key, value))
         else:
-            gauges[name].set(value)
+            gauges[name].set_function(name, value)
     except Exception as e:
         logger.error("Gauge Exception: {0} - Name: {1} Labels: {2} Value: {3}".format(e, name, json.dumps(sorted(labels.keys())), value))
         logger.error("Current labels: {0}".format(json.dumps(sorted(counters[name]._labelnames))))
@@ -111,20 +117,17 @@ def read_topic(consumer, drop_list):
             break
 
 def reset_lru_gauges():
-    for lru in lru_cache_inactive.items():
-        try:
-            name = lru[0][0]
-            tup = lru[0][1]
-            gauges[name].remove(*tup)
-            if VERBOSE:
-                logger.info("Reset gauge: {0}:{1}".format(name, tup))
-        except Exception as e:
-            logger.error("Error processing lru: {0}".format(e))
-    lru_cache_inactive.clear()
-    global lru_cache_inactive
-    global lru_cache_active
-    lru_cache_inactive = lru_cache_active
-    lru_cache_active = dict()
+    with gauges_collected_lock:
+        for lru in gauges_collected.items():
+            try:
+                name = lru[0][0]
+                tup = lru[0][1]
+                gauges[name].remove(*tup)
+                if VERBOSE:
+                    logger.info("Reset gauge: {0}:{1}".format(name, tup))
+            except Exception as e:
+                logger.error("Error processing lru: {0}".format(e))
+        gauges_collected.clear()
     
 def wait_for_threads():
     seconds = 0
