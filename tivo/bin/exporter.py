@@ -18,6 +18,8 @@ import threading
 VERBOSE = False
 SIMULATED = False
 INTERVAL_S = 15
+CACHE_CLEANUP_INTERVAL_S = 300
+
 
 gauges = {}
 counters = {}
@@ -94,7 +96,7 @@ def process_guage(name, labels, value):
         
         if labels:
             tup = tuple(labels.values())
-            key = (name, tup)
+            key = (name, tup, 'g')
             lru_cache_active[key] = 1
             gauges[name].labels(*tup).set(value)
             if key in lru_cache_inactive:
@@ -111,7 +113,12 @@ def process_counter(name, labels, value):
             counters[name] = Counter(name, '', tuple(labels.keys()))
         
         if labels:
-            counters[name].labels(*tuple(labels.values())).inc(value)
+            tup = tuple(labels.values())
+            key = (name, tup, 'c')
+            lru_cache_active[key] = 1
+            counters[name].labels(*tup).inc(value)
+            if key in lru_cache_inactive:
+                del lru_cache_inactive[key]
         else:
             counters[name].inc(value)
     except Exception as e:
@@ -130,13 +137,19 @@ def read_topic(consumer, drop_list):
             logger.info("Processed {0} events in {1} seconds, now exit loop.".format(count, INTERVAL_S))
             break
 
-def reset_lru_gauges():
-    for lru in lru_cache_inactive.items():
+def reset_lru():
+    if time.time() - last_clean < CACHE_CLEANUP_INTERVAL_S:
+        return
+    for lru, val in lru_cache_inactive.items():
         try:
-            name = lru[0][0]
-            tup = lru[0][1]
-            gauges[name].remove(*tup)
-            logger.debug("Reset gauge: {0}:{1}".format(name, tup))
+            name = lru[0]
+            tup = lru[1]
+            if lru[2] == 'g':
+                gauges[name].remove(*tup)
+                logger.debug("Reset gauge: {0}:{1}".format(name, tup))
+            else:
+                counters[name].remove(*tup)
+                logger.debug("Reset counter: {0}:{1}".format(name, tup))
         except Exception as e:
             logger.error("Error processing lru: {0}".format(e))
     lru_cache_inactive.clear()
@@ -144,6 +157,8 @@ def reset_lru_gauges():
     global lru_cache_active
     lru_cache_inactive = lru_cache_active
     lru_cache_active = dict()
+    global last_clean
+    last_clean = time.time()
     
 def wait_for_threads():
     seconds = 0
@@ -191,9 +206,11 @@ def main():
                      api_version=(0,10))
         start_http_server(9800)
         
+        global last_clean
+        last_clean = 0
         while True:
             read_topic(client, args.drop_list)
-            reset_lru_gauges()
+            reset_lru()
                 
     except KeyboardInterrupt as e:
         logger.info("Stopped")
