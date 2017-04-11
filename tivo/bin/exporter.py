@@ -17,12 +17,23 @@ import threading
 
 VERBOSE = False
 SIMULATED = False
-INTERVAL_S = 1
+INTERVAL_S = 15
 
 gauges = {}
 counters = {}
 lru_cache_active = dict()
 lru_cache_inactive = dict()
+
+def normalize_label(token):
+    return re.sub(r'[^a-zA-Z0-9_:]', '_', token)
+
+def flatten_attrs(attrs):
+    str = ""
+    for k, v in attrs.items():
+        if str:
+            str += " | "
+        str += k + ":" + v
+    return str
 
 def transformEventToPrometheusMetric(eventStr, drop_list, verbose):
     try:
@@ -39,29 +50,42 @@ def transformEventToPrometheusMetric(eventStr, drop_list, verbose):
         
         name = event.get('type')
         service = event.get('service')
-        met_name = re.sub(r'[^a-zA-Z0-9_:]', '_', '{0}_{1}'.format(service, name))
         labels = {}
-        # Emit one counter per event
-        for item in event.items():
-            if item[0] in ["attrs", "type", "tsMS", "details", "service"]:
+        
+        # collect labels
+        for k, v in event.items():
+            if k in ["attrs", "type", "tsMS", "details", "service"]:
                 continue
-            labels[re.sub(r'[^a-zA-Z0-9_:]', '_', item[0])] = item[1]
+            labels[normalize_label(k)] = v
+        
+        labels["attrs"] = ""
+        num_attrs = {}
+        other_attrs = {}
+        if event.has_key("attrs"):
+            for k, v in event.get('attrs').items():
+                met_name = normalize_label('{0}_{1}_{2}'.format(service, name, k))
+                try:
+                    num_attrs[k] = float(v)
+                except ValueError as e:
+                    other_attrs[k] = v
+            '''
+            TODO: Enable this after parallelizing the exporting
+            if other_attrs:
+                labels["attrs"] = flatten_attrs(other_attrs)
+            '''
+                
+        # Emit one counter per event        
+        met_name = normalize_label('{0}_{1}'.format(service, name))
         process_counter(met_name, labels, 1)
         
         # Emit floating point attributes as gauges.
-        if event.has_key("attrs"):
-            for item in event.get('attrs').items():
-                try:
-                    value = float(item[1])
-                    met_name = re.sub(r'[^a-zA-Z0-9_:]', '_', '{0}_{1}_{2}'.format(service, name, item[0]))
-                    process_guage(met_name, labels, value)
-                except ValueError as ve:
-                    continue
+        for k, v in num_attrs.items():
+            met_name = normalize_label('{0}_{1}_{2}'.format(service, name, k))
+            process_guage(met_name, labels, v)
+                
     except Exception as e:
-        if verbose:
-            logger.error("Exception in transform: {}".format(e))
-        if SIMULATED:
-            raise e
+        logger.exception("Exception while transforming.")
+            
     
 def process_guage(name, labels, value):
     try:
@@ -73,7 +97,6 @@ def process_guage(name, labels, value):
             key = (name, tup)
             lru_cache_active[key] = 1
             gauges[name].labels(*tup).set(value)
-            #gauges[name].labels(*tup).set_function(gauge_collect_callback_generator(name, tup, value))
             if key in lru_cache_inactive:
                 del lru_cache_inactive[key]
         else:
@@ -96,9 +119,7 @@ def process_counter(name, labels, value):
         logger.error("Current labels: {0}".format(json.dumps(sorted(counters[name]._labelnames))))
 
 def read_topic(consumer, drop_list):
-    
-    if VERBOSE:
-        logger.debug("Initiate reading events.")
+    logger.debug("Initiate reading events.")
     
     start_time = time.time()
     count = 0
@@ -106,8 +127,7 @@ def read_topic(consumer, drop_list):
         transformEventToPrometheusMetric(message.value, drop_list, VERBOSE)
         count += 1
         if (time.time() - start_time) > INTERVAL_S:
-            if VERBOSE:
-                logger.info("Processed {0} events in {1} seconds, now exit loop.".format(count, INTERVAL_S))
+            logger.info("Processed {0} events in {1} seconds, now exit loop.".format(count, INTERVAL_S))
             break
 
 def reset_lru_gauges():
@@ -116,8 +136,7 @@ def reset_lru_gauges():
             name = lru[0][0]
             tup = lru[0][1]
             gauges[name].remove(*tup)
-            if VERBOSE:
-                logger.info("Reset gauge: {0}:{1}".format(name, tup))
+            logger.debug("Reset gauge: {0}:{1}".format(name, tup))
         except Exception as e:
             logger.error("Error processing lru: {0}".format(e))
     lru_cache_inactive.clear()
@@ -153,18 +172,19 @@ def main():
     SIMULATED = args.simulated
     
     if VERBOSE:
-        logger.info(args)
+        logger.setLevel(logging.DEBUG)
+        
+    logger.debug(args)
     
     bootstrap = ['{0}:{1}'.format(args.broker, args.port)]
     
-    if VERBOSE:
-        logger.info("Preparing to listen for events from {}".format(bootstrap))
+    logger.info("Preparing to listen for events from {}".format(bootstrap))
     
     try:
         timeout_ms = INTERVAL_S * 1000
         client = KafkaConsumer("events",
                      enable_auto_commit=(not SIMULATED),
-                     group_id="events-metrics-prometheus-exporter",
+                     group_id="events-metrics-prometheus-exporter-{0}-{1}".format(args.broker, args.port),
                      auto_offset_reset='latest',
                      bootstrap_servers=bootstrap,
                      consumer_timeout_ms=timeout_ms,

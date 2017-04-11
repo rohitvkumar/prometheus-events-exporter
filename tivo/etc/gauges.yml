@@ -1,5 +1,0 @@
-gauges:
-  - metric: consumer-fetch-manager-metrics
-    attr: records-lag-max
-  - metric: stream-metrics
-    attr: process-calls-rate
